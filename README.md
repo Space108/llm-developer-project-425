@@ -39,3 +39,5 @@ Pull: ответ обычно до ~60 сек. MCP: `require_approval: never`, �
 5. `у меня отвалился Wi-Fi в переговорке X, что делать?` → вне базы; затем `не помогло, создай тикет категория bug` → `ticket_id` в письме и `list-my-tickets`.
 
 Логи: `GOT_UNSEEN` / `USAGE` / `MCP_CALL` / `SEND_OK` у `email-poller`; Traces у агента в AI Studio.
+
+Шпаргалка к ревью (секреты, pull, MCP, Responses API): [`docs/shpargalka-review.pdf`](docs/shpargalka-review.pdf).
