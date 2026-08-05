@@ -1,0 +1,9 @@
+.env
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+smoke-*.json
+src/test-update.json
+src/ydb_tickets/smoke-list.json
