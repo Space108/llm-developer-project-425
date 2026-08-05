@@ -1,0 +1,23 @@
+- name: create-ticket
+  description: "Создать новый тикет обращения и первую запись в истории диалога. Вызывать, когда пользователь просит завести заявку/тикет (bug, docs, feature, access) или явно сообщает о проблеме, которую нужно зафиксировать."
+  input_json_schema: '{"type":"object","properties":{"user_id":{"type":"string","description":"Email или идентификатор пользователя"},"category":{"type":"string","description":"bug | docs | feature | access"},"text":{"type":"string","description":"Текст обращения"},"status":{"type":"string","description":"open | answered | escalated | closed"}},"required":["user_id","category","text"]}'
+  action:
+    function_call:
+      function_id: d4eqkpv8n6dpvpk8ia79
+      tag: $latest
+
+- name: list-my-tickets
+  description: "Вернуть список тикетов пользователя по user_id. Вызывать, когда пользователь спрашивает про свои заявки, статус обращений или историю тикетов."
+  input_json_schema: '{"type":"object","properties":{"user_id":{"type":"string","description":"Email или идентификатор пользователя"}},"required":["user_id"]}'
+  action:
+    function_call:
+      function_id: d4eqkpv8n6dpvpk8ia79
+      tag: $latest
+
+- name: append-message
+  description: "Добавить сообщение в историю диалога тикета (роль user или agent). Вызывать после ответа агента или когда пользователь уточняет детали по уже существующему ticket_id."
+  input_json_schema: '{"type":"object","properties":{"ticket_id":{"type":"string","description":"ID тикета"},"role":{"type":"string","description":"user | agent"},"text":{"type":"string","description":"Текст сообщения"},"model":{"type":"string"},"tokens_in":{"type":"integer"},"tokens_out":{"type":"integer"},"latency_ms":{"type":"integer"}},"required":["ticket_id","role","text"]}'
+  action:
+    function_call:
+      function_id: d4eqkpv8n6dpvpk8ia79
+      tag: $latest

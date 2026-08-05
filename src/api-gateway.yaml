@@ -1,0 +1,24 @@
+openapi: 3.0.0
+info:
+  title: telegram-bot
+  version: 1.0.0
+paths:
+  /telegram:
+    post:
+      x-yc-apigateway-integration:
+        type: cloud_functions
+        function_id: d4ed4u6oui1gonl4ikpd
+        tag: "$latest"
+        payload_format_version: "1.0"
+      responses:
+        "200":
+          description: ok
+    get:
+      x-yc-apigateway-integration:
+        type: cloud_functions
+        function_id: d4ed4u6oui1gonl4ikpd
+        tag: "$latest"
+        payload_format_version: "1.0"
+      responses:
+        "200":
+          description: ok
