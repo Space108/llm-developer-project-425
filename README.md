@@ -40,10 +40,9 @@ Pull: ответ обычно до ~60 сек. MCP: `require_approval: never`, �
 | [01-reply-komandirovka.png](docs/screenshots/01-reply-komandirovka.png) | Ответ по почте из KB (`HR-командировки.md`) |
 | [02-reply-wifi.png](docs/screenshots/02-reply-wifi.png) | Вне базы + тикет `c723294f-…` |
 | [03-reply-create-ticket.png](docs/screenshots/03-reply-create-ticket.png) | `create-ticket` → `a397630a-…` |
-| [04-ydb-list-my-tickets.png](docs/screenshots/04-ydb-list-my-tickets.png) | Записи в YDB (`list-my-tickets`) |
+| [04-ydb-list-my-tickets.png](docs/screenshots/04-ydb-list-my-tickets.png) | `list-my-tickets`: Wi‑Fi + create-ticket (`c723294f…`, `a397630a…`) |
 | [05-studio-file-search.png](docs/screenshots/05-studio-file-search.png) | Studio: File Search / трейс tools |
-| [06-terminal-list-tickets.png](docs/screenshots/06-terminal-list-tickets.png) | Терминал: JSON тикетов |
-| [07-studio-traces-tools.png](docs/screenshots/07-studio-traces-tools.png) | Studio: MCP + File Search |
+| [06-studio-traces-tools.png](docs/screenshots/06-studio-traces-tools.png) | Studio: MCP + File Search |
 
 ## Что попробовать
 
