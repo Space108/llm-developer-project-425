@@ -4,11 +4,20 @@ import json
 import os
 import re
 import smtplib
+import time
 import urllib.error
 import urllib.request
 from email import policy
 from email.mime.text import MIMEText
 from email.utils import parseaddr
+
+
+def _required_env(name: str) -> str:
+    value = os.environ.get(name, "")
+    if not value:
+        raise RuntimeError(f"{name} is not set")
+    return value
+
 
 AGENT_INSTRUCTIONS = """
 Ты — AI-агент корпоративной службы поддержки (Help Desk).
@@ -161,7 +170,7 @@ def _message_body(msg) -> str:
 
 
 def _ydb_tickets_invoke(payload: dict, iam_token: str) -> str:
-    fn_id = os.environ.get("YDB_TICKETS_FUNCTION_ID", "d4eqkpv8n6dpvpk8ia79")
+    fn_id = _required_env("YDB_TICKETS_FUNCTION_ID")
     url = f"https://functions.yandexcloud.net/{fn_id}?integration=raw"
     req = urllib.request.Request(
         url,
@@ -176,7 +185,7 @@ def _ydb_tickets_invoke(payload: dict, iam_token: str) -> str:
         return resp.read().decode("utf-8", errors="replace")
 
 
-def _append_agent_message(ticket_id: str, text: str, usage: dict, iam_token: str) -> None:
+def _append_agent_message(ticket_id: str, text: str, usage: dict, iam_token: str, latency_ms: int = 0) -> None:
     """Пишем ответ агента в messages с tokens_in/out из usage Responses API."""
     payload = {
         "action": "append-message",
@@ -186,6 +195,7 @@ def _append_agent_message(ticket_id: str, text: str, usage: dict, iam_token: str
         "model": os.environ.get("YC_MODEL_URI", ""),
         "tokens_in": usage.get("input_tokens", 0),
         "tokens_out": usage.get("output_tokens", 0),
+        "latency_ms": latency_ms,
     }
     try:
         body = _ydb_tickets_invoke(payload, iam_token)
@@ -214,13 +224,10 @@ def ask_llm(text, agent_id, iam_token, sender_email=""):
         "https://rest-assistant.api.cloud.yandex.net/v1/responses",
     )
     folder_id = os.environ.get("YC_FOLDER_ID")
-    search_index_id = os.environ.get("SEARCH_INDEX_ID", "fvthf4vtg4l1e1vmca9g")
+    search_index_id = _required_env("SEARCH_INDEX_ID")
     # По умолчанию MCP включён (шаг 9 E2E). Выключить: ENABLE_MCP=0
     enable_mcp = os.environ.get("ENABLE_MCP", "1").lower() not in ("0", "false", "no")
-    mcp_url = os.environ.get(
-        "MCP_YDB_TICKETS_URL",
-        "https://db8n58h8d9ghuo3jmpv7.gs2td6d8.mcpgw.serverless.yandexcloud.net/sse",
-    )
+    mcp_url = os.environ.get("MCP_YDB_TICKETS_URL", "") if not enable_mcp else _required_env("MCP_YDB_TICKETS_URL")
     model = os.environ.get(
         "YC_MODEL_URI",
         f"gpt://{folder_id}/yandexgpt/latest" if folder_id else "",
@@ -274,10 +281,12 @@ def ask_llm(text, agent_id, iam_token, sender_email=""):
         headers=headers,
         method="POST",
     )
+    started_at = time.monotonic()
     try:
         with urllib.request.urlopen(req, timeout=150) as response:
             result = json.loads(response.read().decode())
-            print(f"RESPONSES_KEYS={list(result.keys())} status={result.get('status')}")
+            latency_ms = int((time.monotonic() - started_at) * 1000)
+            print(f"RESPONSES_KEYS={list(result.keys())} status={result.get('status')} latency_ms={latency_ms}")
             usage = _log_usage(result)
             reply = _extract_text(result) or "Извините, не удалось сформировать ответ."
 
@@ -286,7 +295,7 @@ def ask_llm(text, agent_id, iam_token, sender_email=""):
                 print(f"TICKET_ID={ticket_id}")
                 # исходный текст письма, не ответ модели
                 _fix_ticket_text(ticket_id, text, iam_token)
-                _append_agent_message(ticket_id, reply, usage, iam_token)
+                _append_agent_message(ticket_id, reply, usage, iam_token, latency_ms=latency_ms)
 
             return reply
     except urllib.error.HTTPError as e:
@@ -298,6 +307,19 @@ def ask_llm(text, agent_id, iam_token, sender_email=""):
         return "В данный момент я не могу ответить. Пожалуйста, обратитесь позже."
 
 
+def _send_reply(smtp_host, smtp_port, smtp_user, smtp_pass, sender_email, reply_subject, text, in_reply_to=None):
+    reply_msg = MIMEText(text, _charset="utf-8")
+    reply_msg["Subject"] = reply_subject
+    reply_msg["From"] = smtp_user
+    reply_msg["To"] = sender_email
+    if in_reply_to:
+        reply_msg["In-Reply-To"] = in_reply_to
+        reply_msg["References"] = in_reply_to
+    with smtplib.SMTP_SSL(smtp_host, smtp_port) as server:
+        server.login(smtp_user, smtp_pass)
+        server.send_message(reply_msg)
+
+
 def handle(event, context):
     imap_host = os.environ.get("IMAP_HOST", "imap.yandex.ru")
     imap_user = os.environ["IMAP_USER"]
@@ -306,7 +328,7 @@ def handle(event, context):
     smtp_port = int(os.environ.get("SMTP_PORT", "465"))
     smtp_user = os.environ.get("SMTP_USER", imap_user)
     smtp_pass = os.environ["SMTP_PASSWORD"]
-    agent_id = os.environ.get("AGENT_ID", "fvt299r9451u2cn3m9r7")
+    agent_id = _required_env("AGENT_ID")
     mailbox_norm = imap_user.strip().lower()
 
     iam_token = get_iam_token()
@@ -325,10 +347,27 @@ def handle(event, context):
         print(f"IMAP_OK unseen_count={len(mail_ids)}")
 
         for num in mail_ids[:1]:
+            num_s = num.decode() if isinstance(num, (bytes, bytearray)) else str(num)
             sent_ok = False
+            give_up = False
+            is_retry = False
+            sender_email = ""
+            subject = ""
             try:
-                _, msg_data = mail.fetch(num, "(RFC822)")
-                raw = msg_data[0][1]
+                _, msg_data = mail.fetch(num, "(FLAGS RFC822)")
+                flags_raw = b""
+                raw = None
+                for part in msg_data:
+                    if isinstance(part, tuple):
+                        flags_raw, raw = part[0] or b"", part[1]
+                if raw is None:
+                    raise RuntimeError("empty fetch response")
+                # \Flagged — стандартный IMAP-флаг, используем его как маркер
+                # "уже пробовали и не получилось один раз". Если письмо падает
+                # второй раз подряд (уже помечено), сдаёмся и снимаем его с
+                # очереди — иначе оно блокировало бы весь ящик навсегда.
+                is_retry = b"\\Flagged" in flags_raw
+
                 msg = email.message_from_bytes(raw, policy=policy.default)
 
                 _, sender_email = parseaddr(msg.get("From", ""))
@@ -339,7 +378,7 @@ def handle(event, context):
                 )
 
                 if not sender_norm:
-                    print(f"SKIP empty_from num={num.decode()}")
+                    print(f"SKIP empty_from num={num_s}")
                     mail.store(num, "+FLAGS", "\\Seen")
                     processed += 1
                     continue
@@ -352,36 +391,51 @@ def handle(event, context):
 
                 body = _message_body(msg)
                 print(
-                    f"GOT_UNSEEN=1 -> MSG num={num.decode()} "
+                    f"GOT_UNSEEN=1 -> MSG num={num_s} retry={is_retry} "
                     f"from={sender_email} subject={subject} body_len={len(body or '')}"
                 )
 
                 llm_reply = ask_llm(body, agent_id, iam_token, sender_email=sender_email)
                 print(f"AGENT_OK len={len(llm_reply)}")
 
-                reply_msg = MIMEText(llm_reply, _charset="utf-8")
-                reply_msg["Subject"] = reply_subject
-                reply_msg["From"] = smtp_user
-                reply_msg["To"] = sender_email
-                if msg.get("Message-ID"):
-                    reply_msg["In-Reply-To"] = msg["Message-ID"]
-                    reply_msg["References"] = msg["Message-ID"]
-
-                with smtplib.SMTP_SSL(smtp_host, smtp_port) as server:
-                    server.login(smtp_user, smtp_pass)
-                    server.send_message(reply_msg)
+                _send_reply(
+                    smtp_host, smtp_port, smtp_user, smtp_pass,
+                    sender_email, reply_subject, llm_reply,
+                    in_reply_to=msg.get("Message-ID"),
+                )
                 print(f"SEND_OK to={sender_email}")
                 sent_ok = True
 
             except Exception as e:  # noqa: BLE001
-                print(f"Error processing message {num}: {e}")
+                give_up = is_retry
+                print(f"Error processing message {num_s} (give_up={give_up}): {e}")
+                if give_up and sender_email:
+                    try:
+                        _send_reply(
+                            smtp_host, smtp_port, smtp_user, smtp_pass,
+                            sender_email,
+                            f"Re: {subject}" if subject else "Re: Тест",
+                            "Извините, не удалось обработать ваше обращение из-за "
+                            "технической ошибки. Пожалуйста, напишите нам ещё раз "
+                            "или обратитесь к оператору напрямую.",
+                        )
+                        print(f"DEAD_LETTER_NOTIFY_OK to={sender_email}")
+                    except Exception as notify_err:  # noqa: BLE001
+                        print(f"DEAD_LETTER_NOTIFY_FAILED num={num_s} err={notify_err}")
             finally:
                 if sent_ok:
                     mail.store(num, "+FLAGS", "\\Seen")
+                    mail.store(num, "-FLAGS", "\\Flagged")
+                    processed += 1
+                elif give_up:
+                    # Вторая попытка тоже упала — сдаёмся и снимаем письмо
+                    # с очереди, чтобы оно не блокировало остальные.
+                    print(f"DEAD_LETTER_GIVE_UP num={num_s}")
+                    mail.store(num, "+FLAGS", "\\Seen")
                     processed += 1
                 else:
-                    num_s = num.decode() if isinstance(num, (bytes, bytearray)) else str(num)
-                    print(f"KEEP_UNSEEN num={num_s}")
+                    mail.store(num, "+FLAGS", "\\Flagged")
+                    print(f"KEEP_UNSEEN_RETRY num={num_s}")
 
     except Exception as e:  # noqa: BLE001
         print(f"IMAP Connection error: {e}")

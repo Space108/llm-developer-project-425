@@ -2,20 +2,24 @@ yawl: "0.1"
 start: selectOverdueTickets
 
 steps:
-  # 1. Запрос к YDB: выбираем открытые тикеты старше 24 часов
+  # 1. Запрос к YDB: выбираем тикеты старше 24 часов, которые ещё не закрыты.
+  # 'answered' тоже считаем зависшим: агент ответил, но это не значит,
+  # что вопрос закрыт — пользователь мог не получить помощь по существу.
   selectOverdueTickets:
     databaseQuery:
+      # ВАЖНО: при деплое в другой каталог/базу заменить database на свой путь
+      # (YaWL не поддерживает переменные окружения — только Lockbox/jq по state).
       connection:
         type: YDB
         host: ydb.serverless.yandexcloud.net
         port: 2135
-        database: /ru-central1/b1guflsc731o3ndn2nkj/etne19ghdce1rb457cak
+        database: /ru-central1/b1guflsc731o3ndn2nkj/etne19ghdce1rb457cak  # <- заменить на свой YDB_DATABASE
         ssl: true
         iam: true
       query: >
         SELECT id, user_id, category, text, created_at 
         FROM tickets 
-        WHERE status = 'open' 
+        WHERE status IN ('open', 'answered') 
           AND created_at < (CurrentUtcTimestamp() - Interval('PT24H'));
       mode: QUERY
       output: '\({"tickets": (.ResultSets[0] // []), "count": ((.ResultSets[0] // []) | length)})'
@@ -37,12 +41,17 @@ steps:
         - condition: "true"
           next: noActionNeeded
 
-  # 3. Вызов агента из Agent Atelier для генерации дайджеста
+  # 3. Вызов агента из Agent Atelier для генерации дайджеста.
+  # Текст ответа агента лежит в .Result (см. документацию Yandex Workflows
+  # по шагу aiStudioAgent) — забираем его сразу явным output в свой ключ
+  # "digest", т.к. состояние между шагами сливается по верхнеуровневым
+  # ключам, а не вкладывается под имя шага.
   generateDigest:
     aiStudioAgent:
       promptTemplateId: "fvt299r9451u2cn3m9r7"
-      message: 'Сформируй краткий и структурированный дайджест для оператора техподдержки по следующим просроченным тикетам: \(.tickets // .selectOverdueTickets.tickets)'
+      message: 'Сформируй краткий и структурированный дайджест для оператора техподдержки по следующим просроченным тикетам: \(.tickets)'
       auto_approve: true
+      output: '\({"digest": (.Result // "")})'
       retryPolicy:
         errorList:
           - STEP_TIMEOUT
@@ -55,22 +64,26 @@ steps:
         backoffRate: 2.0
       next: escalateTickets
 
-  # 4. Запрос к YDB: обновляем статус просроченных тикетов на 'escalated'
+  # 4. Запрос к YDB: обновляем статус просроченных тикетов на 'escalated'.
+  # output: '\({})' — явно ничего не добавляем в состояние, чтобы сырой
+  # ответ databaseQuery не затёр ключ "digest", собранный на шаге выше
+  # (слияние состояния идёт по верхнеуровневым ключам).
   escalateTickets:
     databaseQuery:
       connection:
         type: YDB
         host: ydb.serverless.yandexcloud.net
         port: 2135
-        database: /ru-central1/b1guflsc731o3ndn2nkj/etne19ghdce1rb457cak
+        database: /ru-central1/b1guflsc731o3ndn2nkj/etne19ghdce1rb457cak  # <- заменить на свой YDB_DATABASE
         ssl: true
         iam: true
       query: >
         UPDATE tickets 
         SET status = 'escalated', updated_at = CurrentUtcTimestamp()
-        WHERE status = 'open' 
+        WHERE status IN ('open', 'answered') 
           AND created_at < (CurrentUtcTimestamp() - Interval('PT24H'));
       mode: QUERY
+      output: '\({})'
       retryPolicy:
         errorList:
           - STEP_TIMEOUT
@@ -80,10 +93,12 @@ steps:
         backoffRate: 2.0
       next: sendEmail
 
-  # 5. Отправка письма оператору через CF email-sender
+  # 5. Отправка письма оператору через CF email-sender.
+  # Фолбэк — не пустая строка (сбой не должен маскироваться под успех),
+  # а явное сообщение об ошибке, которое видно прямо в письме.
   sendEmail:
     httpCall:
-      url: "https://functions.yandexcloud.net/d4e58dg5b5hlls5tv8g7"
+      url: "https://functions.yandexcloud.net/d4e58dg5b5hlls5tv8g7"  # <- заменить на http_invoke_url своей CF email-sender
       method: POST
       headers:
         Content-Type: "application/json"
@@ -91,7 +106,7 @@ steps:
         \({
           "to": "ibitsa7@yandex.ru",
           "subject": "Дайджест просроченных тикетов",
-          "body": (.generateDigest.result.message // .generateDigest.result.text // "")
+          "body": (.digest // "⚠️ Не удалось получить текст дайджеста от агента (пустой ответ). Проверьте тикеты вручную.")
         } | tojson)
       retryPolicy:
         errorList:

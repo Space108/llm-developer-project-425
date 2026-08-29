@@ -27,7 +27,8 @@ Pull: ответ обычно до ~60 сек. MCP: `require_approval: never`, �
 | CF | `email-poller`, `ydb-tickets`; workflow `daily-escalation` |
 
 **Работает:** почта + RAG, MCP тикеты в YDB, injection/PII guardrail, модерация Studio, workflow эскалации.  
-**Ограничения:** Telegram (сеть из YC); Seen на Help Desk → poller пропускает; self-mail с ящика Help Desk игнорируется.
+**Ограничения:** Seen на Help Desk → poller пропускает; self-mail с ящика Help Desk игнорируется.  
+**Telegram:** `src/telegram_poller.py`, `src/api-gateway.yaml`, `src/cloudflare-telegram-bridge.js` — заглушка со второго шага курса (отвечает статичным текстом, никакой интеграции с help-desk нет). Была реальная попытка довести канал до рабочего вида, но приём сообщений от Telegram так и не заработал стабильно (похоже на сетевые ограничения на стороне Yandex Cloud при обращении к Telegram API), поэтому в проде остался только email-канал. **Сейчас не развёрнута**: соответствующая CF и API Gateway в облаке отсутствуют. В сдаваемой схеме эти файлы не участвуют.
 
 **SA / секреты:** `ai-studio-sa` (functions, mcp, lockbox, llm, ydb). Секреты только в Lockbox / `.env` (не в git).
 
@@ -63,7 +64,10 @@ Pull: ответ обычно до ~60 сек. MCP: `require_approval: never`, �
 5. Векторный индекс: `yandex-ai-studio vector-stores local docs/*.md --name help-desk-kb`.
 6. CF `email-poller` из `src/` (entrypoint `email_poller.handle`) + IMAP/SMTP из Lockbox, env: `SEARCH_INDEX_ID`, `MCP_YDB_TICKETS_URL`, `YC_FOLDER_ID`, `AGENT_ID`.
 7. Триггер timer `0/1 * * * ? *` → `email-poller`.
-8. Workflow: `yc serverless workflow create --name daily-escalation --yaml-spec src/workflow.yaml` (+ SA, расписание).
-9. Локально: скопировать `.env.example` → `.env`, подставить свои ID (пароли не коммитить).
+8. CF `email-sender` из `src/` (entrypoint `email_sender.handle`) + SMTP из Lockbox — без неё `httpCall` в `workflow.yaml` вызывать нечего.
+9. Дать `email-sender` право `functions.functionInvoker` для `allUsers` (`yc serverless function allow-unauthenticated-invoke --name email-sender`) — `httpCall` шага workflow ходит без аутентификации, иначе шаг упадёт с 403.
+10. Отдельный SA для workflow с ролями: `functions.functionInvoker`, `ydb.editor`, `ai.assistants.editor`, `ai.languageModels.user`, `serverless.mcpGateways.invoker`, `lockbox.payloadViewer` — без них падает шаг с агентом и/или запись в YDB.
+11. Workflow: `yc serverless workflow create --name daily-escalation --yaml-spec src/workflow.yaml` (+ SA из шага 10, расписание).
+12. Локально: скопировать `.env.example` → `.env`, подставить свои ID (пароли не коммитить).
 
 Код: `src/email_poller.py`, `src/email_sender.py`, `src/workflow.yaml`, `src/ydb_tickets/{index.py,schema.sql,mcp-tools.yaml}`.

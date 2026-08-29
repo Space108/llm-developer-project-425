@@ -205,6 +205,10 @@ def update_ticket_text(pool: ydb.SessionPool, payload: dict) -> dict:
     raw_text = payload.get("text", "")
     text = mask_pii(raw_text)
 
+    blocked = _guardrail(raw_text, "update-ticket-text")
+    if blocked:
+        return blocked
+
     def callee(session: ydb.Session) -> None:
         q_ticket = session.prepare(
             """
@@ -255,7 +259,8 @@ def list_my_tickets(pool: ydb.SessionPool, payload: dict) -> list:
             SELECT id, status, category, text, created_at
             FROM tickets VIEW tickets_by_user
             WHERE user_id = $user_id
-            ORDER BY created_at DESC;
+            ORDER BY created_at DESC
+            LIMIT 50;
             """
         )
         result_sets = session.transaction().execute(
