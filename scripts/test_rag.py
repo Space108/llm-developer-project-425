@@ -6,6 +6,7 @@ import urllib.request
 
 token = os.environ["YC_IAM_TOKEN"]
 folder = os.environ["YC_FOLDER_ID"]
+search_index_id = os.environ["SEARCH_INDEX_ID"]
 question = sys.argv[1] if len(sys.argv) > 1 else "как оформить командировку?"
 
 payload = {
@@ -19,7 +20,7 @@ payload = {
     "tools": [
         {
             "type": "file_search",
-            "vector_store_ids": ["fvthf4vtg4l1e1vmca9g"],
+            "vector_store_ids": [search_index_id],
         }
     ],
     "tool_choice": {"type": "file_search"},
