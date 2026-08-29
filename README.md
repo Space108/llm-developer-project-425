@@ -34,7 +34,7 @@ Pull: ответ обычно до ~60 сек. MCP: `require_approval: never`, �
 
 ## Скриншоты E2E
 
-Цепочка для проверяющего (папка [`docs/screenshots/`](docs/screenshots/)):
+Папка [`docs/screenshots/`](docs/screenshots/):
 
 | Файл | Что видно |
 |------|-----------|
@@ -44,6 +44,10 @@ Pull: ответ обычно до ~60 сек. MCP: `require_approval: never`, �
 | [04-ydb-list-my-tickets.png](docs/screenshots/04-ydb-list-my-tickets.png) | `list-my-tickets`: Wi‑Fi + create-ticket (`c723294f…`, `a397630a…`) |
 | [05-studio-file-search.png](docs/screenshots/05-studio-file-search.png) | Studio: File Search / трейс tools |
 | [06-studio-traces-tools.png](docs/screenshots/06-studio-traces-tools.png) | Studio: MCP + File Search |
+| [07-injection-blocked.png](docs/screenshots/07-injection-blocked.png) | Негативный сценарий: инъекция → `injection_blocked` (regex) |
+| [08-email-poller-logs.png](docs/screenshots/08-email-poller-logs.png) | Логи `email-poller`: `GOT_UNSEEN` → `file_search` → `SEND_OK` |
+| [09-digest-overdue.png](docs/screenshots/09-digest-overdue.png) | Письмо оператору: дайджест просроченных тикетов |
+| [10-ydb-tickets-table.png](docs/screenshots/10-ydb-tickets-table.png) | Таблица `tickets` в YDB |
 
 ## Что попробовать
 
