@@ -42,16 +42,14 @@ steps:
           next: noActionNeeded
 
   # 3. Вызов агента из Agent Atelier для генерации дайджеста.
-  # Текст ответа агента лежит в .Result (см. документацию Yandex Workflows
-  # по шагу aiStudioAgent) — забираем его сразу явным output в свой ключ
-  # "digest", т.к. состояние между шагами сливается по верхнеуровневым
-  # ключам, а не вкладывается под имя шага.
+  # Текст ответа агента лежит в .Result (документация YaWL / aiStudioAgent).
+  # Явный output у aiStudioAgent в схеме Hexlet запрещён (additionalProperties),
+  # поэтому ключ не переименовываем — дальше читаем .Result как есть.
   generateDigest:
     aiStudioAgent:
       promptTemplateId: "fvt299r9451u2cn3m9r7"
       message: 'Сформируй краткий и структурированный дайджест для оператора техподдержки по следующим просроченным тикетам: \(.tickets)'
       auto_approve: true
-      output: '\({"digest": (.Result // "")})'
       retryPolicy:
         errorList:
           - STEP_TIMEOUT
@@ -66,7 +64,7 @@ steps:
 
   # 4. Запрос к YDB: обновляем статус просроченных тикетов на 'escalated'.
   # output: '\({})' — явно ничего не добавляем в состояние, чтобы сырой
-  # ответ databaseQuery не затёр ключ "digest", собранный на шаге выше
+  # ответ databaseQuery не затёр ключ "Result" от generateDigest
   # (слияние состояния идёт по верхнеуровневым ключам).
   escalateTickets:
     databaseQuery:
@@ -106,7 +104,7 @@ steps:
         \({
           "to": "ibitsa7@yandex.ru",
           "subject": "Дайджест просроченных тикетов",
-          "body": (.digest // "⚠️ Не удалось получить текст дайджеста от агента (пустой ответ). Проверьте тикеты вручную.")
+          "body": (.Result // "⚠️ Не удалось получить текст дайджеста от агента (пустой ответ). Проверьте тикеты вручную.")
         } | tojson)
       retryPolicy:
         errorList:
