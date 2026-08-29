@@ -59,6 +59,13 @@ Pull: ответ обычно до ~60 сек. MCP: `require_approval: never`, �
 4. `как подключить VPN?` → ответ из KB (`IT-VPN.md`).
 5. `у меня отвалился Wi-Fi в переговорке X, что делать?` → вне базы; затем `не помогло, создай тикет категория bug` → `ticket_id` + `list-my-tickets`.
 
+Дополнительно (скриншоты `07`–`10`):
+
+6. Негативный сценарий: `yc serverless function invoke --name ydb-tickets --data-file injection_test_payload.json` → `injection_blocked`.
+7. Логи поллера после письма: `yc serverless function logs email-poller --limit 15` → `GOT_UNSEEN` / `file_search` / `SEND_OK`.
+8. Письмо оператору «Дайджест просроченных тикетов» (workflow `daily-escalation`).
+9. Таблица `tickets` в YDB — статусы и тексты обращений.
+
 ## Как развернуть (кратко)
 
 1. Каталог YC + SA `ai-studio-sa` с ролями: `functions.functionInvoker`, `serverless.mcpGateways.invoker`, `lockbox.payloadViewer`, `ai.languageModels.user`, `ydb.editor`.
