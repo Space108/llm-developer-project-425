@@ -43,13 +43,12 @@ steps:
 
   # 3. Вызов агента из Agent Atelier для генерации дайджеста.
   # Текст ответа агента лежит в .Result (документация YaWL / aiStudioAgent).
-  # Явный output у aiStudioAgent в схеме Hexlet запрещён (additionalProperties),
-  # поэтому ключ не переименовываем — дальше читаем .Result как есть.
+  # В схеме Hexlet у aiStudioAgent нельзя auto_approve и output —
+  # поэтому читаем .Result как есть, без переименования.
   generateDigest:
     aiStudioAgent:
       promptTemplateId: "fvt299r9451u2cn3m9r7"
       message: 'Сформируй краткий и структурированный дайджест для оператора техподдержки по следующим просроченным тикетам: \(.tickets)'
-      auto_approve: true
       retryPolicy:
         errorList:
           - STEP_TIMEOUT
