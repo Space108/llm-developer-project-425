@@ -31,13 +31,32 @@ AGENT_INSTRUCTIONS = """
 
 Если релевантных документов нет или уверенность низкая:
 - честно скажи, что в базе знаний ответа нет;
-- предложи создать тикет через create-ticket.
+- предложи помощь / уточни проблему (см. ниже), не бросайся сразу в create-ticket.
 
-Если пользователь просит создать тикет (или пишет «создай тикет», категория bug/docs/feature/access):
-- ОБЯЗАТЕЛЬНО вызови tool create-ticket;
-- user_id = email отправителя из контекста письма;
-- поле text — ДОСЛОВНО текст обращения пользователя, без перефразирования и без «исправления» слов;
-- в ответе пользователю явно укажи ticket_id из результата tool.
+Уточнения ДО создания тикета (важно):
+- Если в одном письме несколько разных проблем (VPN + принтер + HR и т.п.) —
+  НЕ вызывай create-ticket сразу. Кратко перечисли темы и спроси, какую
+  закрывать первой (одной заявкой — одна тема).
+- Если есть оффтоп / «отпишите от рассылки» / «я уже не работаю» рядом с IT-проблемой —
+  отдели это и уточни, нужна ли ещё помощь по технике.
+- Если пользователь сам пишет, что уже разобрался («хотя уже норм», «решилось»,
+  «не актуально») — НЕ создавай тикет; подтверди, что заявку не заводишь,
+  и предложи написать снова, если проблема вернётся.
+- Если формулировка проблемы размытая — задай 1–2 уточняющих вопроса,
+  create-ticket не вызывай, пока нет ясной одной задачи.
+
+Создание тикета:
+- Вызывай create-ticket только когда: (а) пользователь явно просит
+  «создай тикет» / указывает категорию bug|docs|feature|access, ИЛИ
+  (б) в базе знаний ответа нет и пользователь подтвердил одну конкретную
+  актуальную проблему.
+- user_id = СТРОГО email отправителя из строки «Email отправителя»
+  (не имя, не выдуманный id);
+- поле text — ДОСЛОВНО текст обращения (без перефразирования);
+- в ответе пользователю явно укажи ticket_id.
+
+Не проси и не сохраняй лишние ПД (паспорт, карта, CVC, адрес «для галочки»).
+Если пользователь сам прислал ПД — не переспрашивай их и не повторяй в ответе целиком.
 
 Если пользователь просит показать заявки — list-my-tickets.
 После create-ticket желательно вызвать append-message (role=agent) с текстом твоего ответа.
@@ -186,15 +205,28 @@ def _ydb_tickets_invoke(payload: dict, iam_token: str) -> str:
 
 
 def _append_agent_message(ticket_id: str, text: str, usage: dict, iam_token: str, latency_ms: int = 0) -> None:
-    """Пишем ответ агента в messages с tokens_in/out из usage Responses API."""
+    """Пишем ответ агента в messages с учётом total_tokens (раунды tools).
+
+    Responses API: input+output часто меньше total — разница = вызовы инструментов.
+    В таблице только tokens_in/out → кладём так, чтобы in+out == total.
+    """
+    inp = int(usage.get("input_tokens") or 0)
+    out = int(usage.get("output_tokens") or 0)
+    total = int(usage.get("total_tokens") or (inp + out))
+    tokens_in = max(total - out, inp)
+    tokens_out = out
+    print(
+        f"APPEND_USAGE input={inp} output={out} total={total} "
+        f"-> tokens_in={tokens_in} tokens_out={tokens_out}"
+    )
     payload = {
         "action": "append-message",
         "ticket_id": ticket_id,
         "role": "agent",
         "text": text[:4000],
         "model": os.environ.get("YC_MODEL_URI", ""),
-        "tokens_in": usage.get("input_tokens", 0),
-        "tokens_out": usage.get("output_tokens", 0),
+        "tokens_in": tokens_in,
+        "tokens_out": tokens_out,
         "latency_ms": latency_ms,
     }
     try:
@@ -204,18 +236,25 @@ def _append_agent_message(ticket_id: str, text: str, usage: dict, iam_token: str
         print(f"APPEND_MESSAGE_ERR ticket_id={ticket_id} err={e}")
 
 
-def _fix_ticket_text(ticket_id: str, original_text: str, iam_token: str) -> None:
-    """Перезаписываем text тикета дословным текстом письма (агент часто коверкает)."""
+def _fix_ticket_fields(
+    ticket_id: str, original_text: str, iam_token: str, user_id: str = ""
+) -> None:
+    """Перезаписываем text и user_id с границ письма (модель их часто портит)."""
     payload = {
         "action": "update-ticket-text",
         "ticket_id": ticket_id,
         "text": (original_text or "")[:4000],
     }
+    if user_id:
+        payload["user_id"] = user_id
     try:
         body = _ydb_tickets_invoke(payload, iam_token)
-        print(f"FIX_TICKET_TEXT_OK ticket_id={ticket_id} body={body[:200]}")
+        print(
+            f"FIX_TICKET_OK ticket_id={ticket_id} user_id={user_id or '-'} "
+            f"body={body[:200]}"
+        )
     except Exception as e:  # noqa: BLE001
-        print(f"FIX_TICKET_TEXT_ERR ticket_id={ticket_id} err={e}")
+        print(f"FIX_TICKET_ERR ticket_id={ticket_id} err={e}")
 
 
 def ask_llm(text, agent_id, iam_token, sender_email=""):
@@ -293,8 +332,10 @@ def ask_llm(text, agent_id, iam_token, sender_email=""):
             ticket_id = _extract_ticket_id(result)
             if ticket_id:
                 print(f"TICKET_ID={ticket_id}")
-                # исходный текст письма, не ответ модели
-                _fix_ticket_text(ticket_id, text, iam_token)
+                # text и user_id — с письма, не из аргументов модели
+                _fix_ticket_fields(
+                    ticket_id, text, iam_token, user_id=(sender_email or "").strip()
+                )
                 _append_agent_message(ticket_id, reply, usage, iam_token, latency_ms=latency_ms)
 
             return reply
