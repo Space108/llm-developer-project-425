@@ -37,34 +37,12 @@ steps:
     switch:
       choices:
         - condition: '\( .count > 0 )'
-          next: generateDigest
+          next: escalateTickets
         - condition: "true"
           next: noActionNeeded
 
-  # 3. Вызов агента из Agent Atelier для генерации дайджеста.
-  # Текст ответа агента лежит в .Result (документация YaWL / aiStudioAgent).
-  # В схеме Hexlet у aiStudioAgent нельзя auto_approve и output —
-  # поэтому читаем .Result как есть, без переименования.
-  generateDigest:
-    aiStudioAgent:
-      promptTemplateId: "fvt299r9451u2cn3m9r7"
-      message: 'Сформируй краткий и структурированный дайджест для оператора техподдержки по следующим просроченным тикетам: \(.tickets)'
-      retryPolicy:
-        errorList:
-          - STEP_TIMEOUT
-          - HTTP_CALL_500
-          - HTTP_CALL_502
-          - HTTP_CALL_503
-          - HTTP_CALL_504
-        retryCount: 3
-        initialDelay: 2s
-        backoffRate: 2.0
-      next: escalateTickets
-
-  # 4. Запрос к YDB: обновляем статус просроченных тикетов на 'escalated'.
-  # output: '\({})' — явно ничего не добавляем в состояние, чтобы сырой
-  # ответ databaseQuery не затёр ключ "Result" от generateDigest
-  # (слияние состояния идёт по верхнеуровневым ключам).
+  # 3. Статус → escalated. Дайджест для оператора собираем сами из .tickets
+  # (без Help Desk агента: у него file_search / list-my-tickets и другой промпт).
   escalateTickets:
     databaseQuery:
       connection:
@@ -90,9 +68,7 @@ steps:
         backoffRate: 2.0
       next: sendEmail
 
-  # 5. Отправка письма оператору через CF email-sender.
-  # Фолбэк — не пустая строка (сбой не должен маскироваться под успех),
-  # а явное сообщение об ошибке, которое видно прямо в письме.
+  # 4. Письмо оператору: структурированный дайджест из выборки YDB (jq), не LLM.
   sendEmail:
     httpCall:
       url: "https://functions.yandexcloud.net/d4e58dg5b5hlls5tv8g7"  # <- заменить на http_invoke_url своей CF email-sender
@@ -103,7 +79,14 @@ steps:
         \({
           "to": "ibitsa7@yandex.ru",
           "subject": "Дайджест просроченных тикетов",
-          "body": (.Result // "⚠️ Не удалось получить текст дайджеста от агента (пустой ответ). Проверьте тикеты вручную.")
+          "body": (
+            "Просроченные тикеты: \(.count)\n\n" +
+            (
+              [.tickets[] |
+                "- id: \(.id // .Id // "?")\n  user: \(.user_id // .UserId // "?")\n  category: \(.category // .Category // "?")\n  created: \(.created_at // .CreatedAt // "?")\n  text: \((.text // .Text // "") | tostring | .[0:240])"
+              ] | join("\n\n")
+            )
+          )
         } | tojson)
       retryPolicy:
         errorList:

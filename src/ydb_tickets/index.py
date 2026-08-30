@@ -200,27 +200,58 @@ def create_ticket(pool: ydb.SessionPool, payload: dict) -> dict:
 
 
 def update_ticket_text(pool: ydb.SessionPool, payload: dict) -> dict:
-    """Исправить text тикета (и первого user-сообщения) — дословный текст письма."""
+    """Исправить text (и опционально user_id) тикета — данные с границы письма."""
     ticket_id = payload["ticket_id"]
     raw_text = payload.get("text", "")
     text = mask_pii(raw_text)
+    user_id = (payload.get("user_id") or "").strip()
 
     blocked = _guardrail(raw_text, "update-ticket-text")
     if blocked:
         return blocked
 
     def callee(session: ydb.Session) -> None:
-        q_ticket = session.prepare(
-            """
-            DECLARE $id AS Utf8;
-            DECLARE $text AS Utf8;
-            DECLARE $updated_at AS Timestamp;
+        ts = int(time.time() * 1_000_000)
+        if user_id:
+            q_ticket = session.prepare(
+                """
+                DECLARE $id AS Utf8;
+                DECLARE $text AS Utf8;
+                DECLARE $user_id AS Utf8;
+                DECLARE $updated_at AS Timestamp;
 
-            UPDATE tickets
-            SET text = $text, updated_at = $updated_at
-            WHERE id = $id;
-            """
-        )
+                UPDATE tickets
+                SET text = $text, user_id = $user_id, updated_at = $updated_at
+                WHERE id = $id;
+                """
+            )
+            session.transaction().execute(
+                q_ticket,
+                {
+                    "$id": ticket_id,
+                    "$text": text,
+                    "$user_id": user_id,
+                    "$updated_at": ts,
+                },
+                commit_tx=True,
+            )
+        else:
+            q_ticket = session.prepare(
+                """
+                DECLARE $id AS Utf8;
+                DECLARE $text AS Utf8;
+                DECLARE $updated_at AS Timestamp;
+
+                UPDATE tickets
+                SET text = $text, updated_at = $updated_at
+                WHERE id = $id;
+                """
+            )
+            session.transaction().execute(
+                q_ticket,
+                {"$id": ticket_id, "$text": text, "$updated_at": ts},
+                commit_tx=True,
+            )
         q_msg = session.prepare(
             """
             DECLARE $ticket_id AS Utf8;
@@ -231,12 +262,6 @@ def update_ticket_text(pool: ydb.SessionPool, payload: dict) -> dict:
             WHERE ticket_id = $ticket_id AND role = 'user';
             """
         )
-        ts = int(time.time() * 1_000_000)
-        session.transaction().execute(
-            q_ticket,
-            {"$id": ticket_id, "$text": text, "$updated_at": ts},
-            commit_tx=True,
-        )
         session.transaction().execute(
             q_msg,
             {"$ticket_id": ticket_id, "$text": text},
@@ -244,8 +269,14 @@ def update_ticket_text(pool: ydb.SessionPool, payload: dict) -> dict:
         )
 
     pool.retry_operation_sync(callee)
-    _safe_log("update-ticket-text", stage="ok", ticket_id=ticket_id, text_masked=text[:120])
-    return {"ticket_id": ticket_id, "text": text, "ok": True}
+    _safe_log(
+        "update-ticket-text",
+        stage="ok",
+        ticket_id=ticket_id,
+        user_id_set=bool(user_id),
+        text_masked=text[:120],
+    )
+    return {"ticket_id": ticket_id, "text": text, "user_id": user_id or None, "ok": True}
 
 
 def list_my_tickets(pool: ydb.SessionPool, payload: dict) -> list:

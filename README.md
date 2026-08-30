@@ -11,7 +11,7 @@ email → ibitsa7@yandex.ru
   → SMTP Reply
 ```
 
-Pull: ответ обычно до ~60 сек. MCP: `require_approval: never`, запись в YDB только через CF. PII маскируется в CF, не в промпте.
+Pull: ответ обычно до ~60 сек. MCP: `require_approval: never`, запись в YDB только через CF. PII: regex + yandexgpt-lite redact на границе CF (не в промпте). Агент уточняет «кашу» в письме до create-ticket.
 
 **Trusted:** system prompt, конфиг MCP, ID индекса, код CF.  
 **Untrusted:** текст письма / чата, фрагменты RAG — не подставлять в system prompt.
