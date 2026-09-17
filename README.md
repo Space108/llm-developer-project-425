@@ -1,7 +1,7 @@
 ### Hexlet tests and linter status:
 [![Actions Status](https://github.com/Space108/llm-developer-project-425/actions/workflows/hexlet-check.yml/badge.svg)](https://github.com/Space108/llm-developer-project-425/actions)
 
-## Архитектура
+## Архитектура        SpaceQ
 
 ```
 email → ibitsa7@yandex.ru
